@@ -1,45 +1,90 @@
-import time
-from telethon import TelegramClient
-from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
-from config import api_hash, api_id
-from utils import time_has_changed, generate_time_image_bytes
-from datetime import datetime, timedelta
-import argparse
-import pytz
+from telethon import TelegramClient, events
+import os
+from datetime import datetime
+from utils import sandjob
+
+api_hash = os.getenv("TTWO")
+api_id = os.getenv("TONE")
+
+allowed_chats = [
+    #123456789,
+]
+me = sandjob.sender.my
+print(f"ID client: {me}")
+
+# Создаем директорию для логов и загрузок
+os.makedirs("data", exist_ok=True)
+os.makedirs("data/private", exist_ok=True)
+os.makedirs("data/groups", exist_ok=True)
+os.makedirs("data/channels", exist_ok=True)
+
+# Инициализация клиента
+client = TelegramClient('session_name', api_id, api_hash)
+
+#------------------------------------------------------------------------------------------------------------------
+# Функция для логирования сообщений
+
+def log_message(log, sender, message, file_path=None):
+    
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    log_entry = f"[{timestamp}]  {sender}: {message}\n"
+
+    if file_path:  # Если есть медиафайл
+        log_entry += f"Медиафайл: {file_path}\n"
+
+    # Сохраняем лог в файл
+    with open(log, "a", encoding="utf-8") as log_file:
+        log_file.write(log_entry)
+
+#------------------------------------------------------------------------------------------------------------------
+# Обработчик новых сообщений
+@client.on(events.NewMessage)
+async def handle_new_message(event):
+    
+    msgSender = event.sender_id # Сохраняем ID отправителя
+    msgText = event.message.text or "<Без текста>" # Текст сообщения
+    msgChat = event.chat_id
+    isGroup = event.is_group
+    isChannel = True if msgChat < 0 and isGroup == False else False
+     
+    #Логируем ID, направление и текст
+    
+    if (msgChat != msgSender and msgSender == me) or msgChat == msgSender:
+        dir = f"data/private"
+        down = f"data/private/{msgChat}/"
+        log = f"data/private/{msgChat}.log"
+
+    elif isChannel:
+        dir = f"data/channels"
+        down = f"data/channels/{msgChat}/"
+        log = f"data/channels/{msgChat}.log"
+
+    elif isGroup:
+        dir = f"data/groups"
+        down = f"data/groups/{msgChat}/"
+        log = f"data/groups/{msgChat}.log"
 
 
-def valid_tz(s):
-    try:
-        return pytz.timezone(s)
-    except:
-        msg = "Not a valid tz: '{0}'.".format(s)
-        raise argparse.ArgumentTypeError(msg)
+    print(f"""
+        Group: {isGroup}
+        Channel: {isChannel}
+        Chat: {msgChat}
+        Sender: {msgSender}
+        My ID: {me}
+        Text: {msgText}
+        Directory: {dir}
+        Log: {log}
+        Downloads: {down}
+    """)
 
+    if event.media:  # Если сообщение содержит медиа
+        file_path = await event.download_media(file=down)
+        log_message(log, msgSender, msgText, file_path)
+    else:  # Если это текстовое сообщение
+        log_message(log, msgSender, msgText)
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--api_id", required=False, help="user api ID", type=str, default=api_id)
-parser.add_argument("--api_hash", required=False, help="user api Hash", type=str, default=api_hash)
-parser.add_argument("--tz", required=False,  help="user api Hash", type=valid_tz, default=valid_tz('Asia/Tashkent'))
-
-args = parser.parse_args()
-
-client = TelegramClient("carpediem", args.api_id, args.api_hash)
-client.start()
-
-
-async def main():
-    prev_update_time = datetime.now() - timedelta(minutes=1)
-
-    while True:
-        if time_has_changed(prev_update_time):
-            bts = generate_time_image_bytes(datetime.now(args.tz).replace(tzinfo=None))
-            await client(DeletePhotosRequest(await client.get_profile_photos('me')))
-            file = await client.upload_file(bts)
-            await client(UploadProfilePhotoRequest(file))
-            prev_update_time = datetime.now()
-            time.sleep(1)
-            
-
-if __name__ == '__main__':
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(main())
+#------------------------------------------------------------------------------------------------------------------
+# Запускаем клиент
+with client:
+    print("Запуск клиента...")
+    client.run_until_disconnected()
